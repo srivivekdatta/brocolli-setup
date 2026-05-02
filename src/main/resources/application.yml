@@ -2,23 +2,28 @@ spring:
   application:
     name: wire-payment-service
 
-  # ── Oracle UCP connection pool ─────────────────────────────────────────────
-  # 5 pods × 20 connections = 100 total sessions against Oracle
-  # Oracle 19c default max sessions: 300 — leaves headroom for other apps
+  # ── HikariCP connection pool ───────────────────────────────────────────────
+  # 5 pods × 20 connections = 100 total sessions against Oracle 19c
+  # Oracle default max sessions ~300 — leaves headroom for other apps/DBAs
   datasource:
-    url:      ${DB_URL}                          # jdbc:oracle:thin:@//host:1521/service
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    url:              ${DB_URL}        # jdbc:oracle:thin:@//host:1521/service
+    username:         ${DB_USERNAME}
+    password:         ${DB_PASSWORD}
     driver-class-name: oracle.jdbc.OracleDriver
-    type: oracle.ucp.jdbc.PoolDataSource
-    oracleucp:
-      initial-pool-size:       5
-      min-pool-size:           5
-      max-pool-size:           20               # per pod
-      connection-wait-timeout: 3               # seconds — fail fast, don't queue forever
-      inactive-connection-timeout: 60
-      validate-connection-on-borrow: true
-      sql-for-validate-connection: "SELECT 1 FROM DUAL"
+    hikari:
+      pool-name:               WirePaymentPool
+      minimum-idle:            5
+      maximum-pool-size:       20             # per pod — tune with load test
+      connection-timeout:      3000           # ms — fail fast, don't queue forever
+      idle-timeout:            60000          # ms — evict idle connections after 60s
+      max-lifetime:            1800000        # ms — 30min — recycle before Oracle kills them
+      keepalive-time:          30000          # ms — ping Oracle to keep connections alive
+      validation-timeout:      2000           # ms
+      connection-test-query:   SELECT 1 FROM DUAL   # Oracle-specific ping query
+      # Connection properties passed to the JDBC driver
+      data-source-properties:
+        oracle.net.CONNECT_TIMEOUT: 3000      # ms — TCP connect timeout
+        oracle.jdbc.ReadTimeout:    30000     # ms — socket read timeout
 
   # ── Kafka ──────────────────────────────────────────────────────────────────
   kafka:

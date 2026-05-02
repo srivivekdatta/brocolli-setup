@@ -1,7 +1,10 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot'    version '3.3.4'
-    id 'io.spring.dependency-management' version '1.1.6'
+    id 'org.springframework.boot'            version '3.3.4'
+    id 'io.spring.dependency-management'     version '1.1.6'
+    // JSON Schema → POJO generation
+    // Run: ./gradlew generateJsonSchema2Pojo
+    id 'org.jsonschema2pojo'                 version '1.2.1'
 }
 
 group   = 'com.yourbank.payments'
@@ -14,61 +17,64 @@ java {
 }
 
 configurations {
-    compileOnly {
-        extendsFrom annotationProcessor
-    }
+    compileOnly { extendsFrom annotationProcessor }
 }
 
 repositories {
     mavenCentral()
-    // Confluent Schema Registry artifacts
-    maven { url 'https://packages.confluent.io/maven/' }
 }
 
 ext {
-    resilience4jVersion    = '2.2.0'
-    otelVersion            = '1.39.0'
-    jsonSchemaVersion      = '1.3.3'
-    confluentVersion       = '7.7.0'
-    testcontainersVersion  = '1.20.1'
+    resilience4jVersion   = '2.2.0'
+    otelVersion           = '1.39.0'
+    jsonSchemaVersion     = '1.3.3'
+    testcontainersVersion = '1.20.1'
 }
 
 dependencies {
-    // ── Spring Boot core ────────────────────────────────────────────────────
+    // ── Spring Boot core ──────────────────────────────────────────────────────
     implementation 'org.springframework.boot:spring-boot-starter'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
-    // ── Kafka ────────────────────────────────────────────────────────────────
+    // ── Kafka ─────────────────────────────────────────────────────────────────
     implementation 'org.springframework.kafka:spring-kafka'
 
-    // ── Oracle JDBC ──────────────────────────────────────────────────────────
-    runtimeOnly 'com.oracle.database.jdbc:ojdbc11:23.4.0.24.05'
-    runtimeOnly 'com.oracle.database.jdbc:ucp:23.4.0.24.05'        // Universal Connection Pool
+    // ── HikariCP ──────────────────────────────────────────────────────────────
+    // spring-boot-starter-jdbc pulls HikariCP in automatically.
+    // Listed explicitly so intent is clear — we are NOT using Oracle UCP.
+    implementation 'com.zaxxer:HikariCP'
 
-    // ── JSON Schema validation (networknt) ──────────────────────────────────
+    // ── Oracle JDBC (thin driver only) ────────────────────────────────────────
+    runtimeOnly 'com.oracle.database.jdbc:ojdbc11:23.4.0.24.05'
+
+    // ── JSON Schema validation (networknt) ───────────────────────────────────
     implementation "com.networknt:json-schema-validator:${jsonSchemaVersion}"
     implementation 'com.fasterxml.jackson.core:jackson-databind'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
-    // ── Resilience4j ─────────────────────────────────────────────────────────
+    // ── jsonschema2pojo runtime annotations (needed by generated POJOs) ───────
+    implementation 'org.jsonschema2pojo:jsonschema2pojo-core:1.2.1'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations'
+    implementation 'javax.validation:validation-api:2.0.1.Final'
+
+    // ── Resilience4j ──────────────────────────────────────────────────────────
     implementation "io.github.resilience4j:resilience4j-spring-boot3:${resilience4jVersion}"
     implementation "io.github.resilience4j:resilience4j-circuitbreaker:${resilience4jVersion}"
     implementation "io.github.resilience4j:resilience4j-retry:${resilience4jVersion}"
     implementation "io.github.resilience4j:resilience4j-bulkhead:${resilience4jVersion}"
 
-    // ── OpenTelemetry (Splunk distro) ────────────────────────────────────────
+    // ── OpenTelemetry / Splunk ────────────────────────────────────────────────
     implementation "io.opentelemetry:opentelemetry-api:${otelVersion}"
-    implementation "io.opentelemetry:opentelemetry-sdk:${otelVersion}"
     implementation 'io.micrometer:micrometer-registry-otlp'
     implementation 'io.micrometer:micrometer-tracing-bridge-otel'
 
-    // ── Lombok ───────────────────────────────────────────────────────────────
-    compileOnly    'org.projectlombok:lombok'
+    // ── Lombok ────────────────────────────────────────────────────────────────
+    compileOnly         'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
-    // ── Test ─────────────────────────────────────────────────────────────────
+    // ── Test ──────────────────────────────────────────────────────────────────
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
     testImplementation "org.testcontainers:junit-jupiter:${testcontainersVersion}"
@@ -76,13 +82,68 @@ dependencies {
     testImplementation "org.testcontainers:oracle-free:${testcontainersVersion}"
 }
 
-tasks.named('test') {
-    useJUnitPlatform()
-    jvmArgs '-Xmx512m'
+// ── jsonschema2pojo ────────────────────────────────────────────────────────────
+//
+// WORKFLOW — every time the schema changes:
+//   1. Edit src/main/resources/schemas/wire-payment-v1.json
+//   2. Run: ./gradlew generateJsonSchema2Pojo
+//   3. Review generated diff in src/generated/java/
+//   4. Commit schema + generated POJOs together in one PR
+//   5. NEVER hand-edit files under src/generated/java/ — they will be overwritten
+//
+jsonSchema2Pojo {
+    sourceFiles               = files("${projectDir}/src/main/resources/schemas")
+    targetDirectory           = file("${projectDir}/src/generated/java")
+    targetPackage             = 'com.yourbank.payments.model.generated'
+
+    annotationStyle           = 'jackson2'      // @JsonProperty etc.
+    generateBuilders          = true            // .builder().amount(...).build()
+    includeJsr303Annotations  = true            // @NotNull from "required" fields
+    includeToString           = true
+    includeHashcodeAndEquals  = true
+
+    // Match your JavaTimeModule config
+    dateTimeType              = 'java.time.Instant'
+    dateType                  = 'java.time.LocalDate'
+
+    // Critical for money fields — never Double
+    useBigDecimals            = true
+
+    outputEncoding            = 'UTF-8'
+}
+
+// ── Wire generated sources into compile ───────────────────────────────────────
+sourceSets {
+    main {
+        java {
+            srcDirs 'src/main/java', 'src/generated/java'
+        }
+    }
+}
+
+// Option B: generation is opt-in, not automatic on every build.
+//
+// LOCAL — when schema changes, regenerate then commit:
+//   ./gradlew generateJsonSchema2Pojo
+//   git diff src/generated/java/     <- review the diff
+//   git add src/generated/java/ && git commit
+//
+// CI — skip generation, compile against committed POJOs:
+//   ./gradlew build -PskipGenerate
+//
+// Plain ./gradlew build locally (without -PskipGenerate) still
+// regenerates automatically so local dev stays frictionless.
+if (!project.hasProperty('skipGenerate')) {
+    compileJava.dependsOn generateJsonSchema2Pojo
 }
 
 // ── Reproducible builds ───────────────────────────────────────────────────────
 tasks.withType(AbstractArchiveTask).configureEach {
     preserveFileTimestamps = false
     reproducibleFileOrder  = true
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    jvmArgs '-Xmx512m'
 }
