@@ -1,0 +1,150 @@
+---
+# ── Deployment ─────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wire-payment-service
+  labels:
+    app: wire-payment-service
+    version: "1.0.0"
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: wire-payment-service
+  template:
+    metadata:
+      labels:
+        app: wire-payment-service
+      annotations:
+        # Splunk OTEL auto-instrumentation
+        instrumentation.opentelemetry.io/inject-java: "true"
+    spec:
+      containers:
+        - name: wire-payment-service
+          image: your-registry/wire-payment-service:1.0.0
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu:    "4"        # 4 of 8 CPU guaranteed
+              memory: "2Gi"
+            limits:
+              cpu:    "8"        # burst to full 8 cores
+              memory: "5Gi"
+
+          # ── JVM tuning for 5Gi pod ──────────────────────────────────────────
+          env:
+            - name: JAVA_OPTS
+              value: >-
+                -Xms1g
+                -Xmx3g
+                -XX:+UseG1GC
+                -XX:MaxGCPauseMillis=200
+                -XX:G1HeapRegionSize=16m
+                -XX:+HeapDumpOnOutOfMemoryError
+                -XX:HeapDumpPath=/tmp/heapdump.hprof
+                -Djava.security.egd=file:/dev/./urandom
+
+            # ── App config from secrets/configmaps ─────────────────────────
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wire-payment-db-secret
+                  key: url
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: wire-payment-db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wire-payment-db-secret
+                  key: password
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: wire-payment-config
+                  key: kafka.bootstrap.servers
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: wire-payment-config
+                  key: otel.exporter.endpoint
+            - name: OTEL_SERVICE_NAME
+              value: wire-payment-service
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "deployment.environment=$(NAMESPACE)"
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+          # ── Health probes (Spring Boot actuator) ───────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds:       15
+            failureThreshold:    3
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds:       10
+            failureThreshold:    3
+
+          # ── Graceful shutdown — let in-flight batches finish ───────────────
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
+
+      terminationGracePeriodSeconds: 60
+
+---
+# ── ConfigMap ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wire-payment-config
+data:
+  kafka.bootstrap.servers: "kafka-broker-1:9092,kafka-broker-2:9092,kafka-broker-3:9092"
+  otel.exporter.endpoint:  "http://splunk-otel-collector:4318"
+
+---
+# ── Secret (values base64 encoded — replace before apply) ─────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wire-payment-db-secret
+type: Opaque
+data:
+  url:      amRiYzpvcmFjbGU6dGhpbjovL2hvc3Q6MTUyMS9zZXJ2aWNl   # placeholder
+  username: Y2hhbmdlbWU=
+  password: Y2hhbmdlbWU=
+
+---
+# ── HorizontalPodAutoscaler ────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wire-payment-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wire-payment-service
+  minReplicas: 5
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

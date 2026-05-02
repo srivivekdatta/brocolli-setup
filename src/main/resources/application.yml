@@ -1,0 +1,115 @@
+spring:
+  application:
+    name: wire-payment-service
+
+  # ── Oracle UCP connection pool ─────────────────────────────────────────────
+  # 5 pods × 20 connections = 100 total sessions against Oracle
+  # Oracle 19c default max sessions: 300 — leaves headroom for other apps
+  datasource:
+    url:      ${DB_URL}                          # jdbc:oracle:thin:@//host:1521/service
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    type: oracle.ucp.jdbc.PoolDataSource
+    oracleucp:
+      initial-pool-size:       5
+      min-pool-size:           5
+      max-pool-size:           20               # per pod
+      connection-wait-timeout: 3               # seconds — fail fast, don't queue forever
+      inactive-connection-timeout: 60
+      validate-connection-on-borrow: true
+      sql-for-validate-connection: "SELECT 1 FROM DUAL"
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    consumer:
+      group-id:          wire-payment-processor
+      auto-offset-reset: earliest
+      enable-auto-commit: false                 # manual ack only
+      max-poll-records:  100                    # batch size per poll
+      fetch-min-size:    16384                  # 16KB — wait for a meaningful batch
+      fetch-max-wait:    500                    # ms — max wait for fetch-min-size
+      key-deserializer:   org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      type:        batch
+      ack-mode:    manual_immediate
+      concurrency: 3                            # 3 listener threads per pod × 5 pods = 15 threads
+    properties:
+      session.timeout.ms:          45000
+      heartbeat.interval.ms:       15000
+      max.poll.interval.ms:        300000       # 5 min — allow time for batch + Oracle insert
+      isolation.level:             read_committed
+
+  # ── Actuator ──────────────────────────────────────────────────────────────
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: health,info,prometheus,metrics
+    endpoint:
+      health:
+        show-details: always
+        probes:
+          enabled: true               # liveness + readiness for OpenShift
+    health:
+      livenessState:
+        enabled: true
+      readinessState:
+        enabled: true
+    metrics:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/metrics}
+    tracing:
+      sampling:
+        probability: 0.1              # 10% trace sampling — tune per env
+
+# ── Resilience4j ──────────────────────────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      actimize:
+        slidingWindowSize:            20
+        failureRateThreshold:         50
+        waitDurationInOpenState:      30s
+        permittedNumberOfCallsInHalfOpenState: 5
+        registerHealthIndicator:      true
+  retry:
+    instances:
+      actimize:
+        maxAttempts:          3
+        waitDuration:         500ms
+        retryExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+  bulkhead:
+    instances:
+      actimize:
+        maxConcurrentCalls:   40      # 8 cores × 5 = 40 concurrent Actimize calls per pod
+        maxWaitDuration:      100ms
+
+# ── App-specific config ────────────────────────────────────────────────────────
+app:
+  wire:
+    schema-path:         /schemas/wire-payment-v1.json
+    dlq-topic:           wire.payments.dlq
+    executor:
+      core-pool-size:    16           # 2 × 8 cores — I/O bound workload
+      max-pool-size:     32
+      queue-capacity:    500
+      thread-name-prefix: wire-proc-
+    poller:
+      batch-size:        50
+      interval-ms:       500
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId}/%X{spanId}] %-5level %logger{36} - %msg%n"
+  level:
+    root:                          INFO
+    com.yourbank.payments:         DEBUG
+    org.springframework.kafka:     INFO
+    oracle.ucp:                    WARN
