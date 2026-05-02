@@ -2,33 +2,32 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "wire.payment.v1",
   "title": "WirePayment",
-  "description": "Wire payment event schema — ISO 20022 aligned (pacs.008). v1.1.0",
+  "description": "Wire payment event schema — ISO 20022 aligned (pacs.008). v1.2.0",
   "type": "object",
   "required": ["transaction"],
   "additionalProperties": false,
   "properties": {
+
     "transaction": {
       "type": "object",
-      "required": ["debitAccount", "creditAccount", "transactionData"],
+      "required": ["wireData"],
       "additionalProperties": false,
       "properties": {
-        "debitAccount": {
-          "$ref": "#/definitions/account"
-        },
-        "creditAccount": {
-          "$ref": "#/definitions/account"
-        },
-        "transactionData": {
+
+        "wireData": {
           "type": "object",
           "required": [
             "transactionId",
             "amount",
             "currency",
             "valueDate",
-            "paymentType"
+            "paymentType",
+            "debit",
+            "credit"
           ],
           "additionalProperties": false,
           "properties": {
+
             "transactionId": {
               "type": "string",
               "format": "uuid",
@@ -37,7 +36,7 @@
             "amount": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "Transaction amount — use BigDecimal on consumer side"
+              "description": "Transaction amount — use BigDecimal on consumer side, never Double"
             },
             "currency": {
               "type": "string",
@@ -63,14 +62,23 @@
               "type": "string",
               "maxLength": 10,
               "description": "ISO 20022 Purpose2Choice code e.g. SALA, SUPP, TREA, INTC"
+            },
+
+            "debit": {
+              "$ref": "#/definitions/party"
+            },
+
+            "credit": {
+              "$ref": "#/definitions/party"
             }
           }
         }
       }
     },
+
     "party": {
       "type": "object",
-      "description": "Originating party context — optional. Present when payment is initiated via online banking or API. Absent for bulk/file-based submissions.",
+      "description": "Originating party context — optional. Present for online/API-initiated payments. Absent for bulk/file-based submissions.",
       "required": ["userId", "companyId"],
       "additionalProperties": false,
       "properties": {
@@ -84,8 +92,26 @@
         }
       }
     }
+
   },
+
   "definitions": {
+
+    "party": {
+      "type": "object",
+      "required": ["account"],
+      "additionalProperties": false,
+      "description": "Debit or credit party — account details + optional address",
+      "properties": {
+        "account": {
+          "$ref": "#/definitions/account"
+        },
+        "address": {
+          "$ref": "#/definitions/postalAddress"
+        }
+      }
+    },
+
     "account": {
       "type": "object",
       "required": ["accountNumber", "routingNumber", "accountHolderName"],
@@ -115,12 +141,10 @@
           "type": "string",
           "maxLength": 140,
           "description": "Legal name of account holder"
-        },
-        "address": {
-          "$ref": "#/definitions/postalAddress"
         }
       }
     },
+
     "postalAddress": {
       "type": "object",
       "required": ["country"],
@@ -203,5 +227,6 @@
         }
       }
     }
+
   }
 }
