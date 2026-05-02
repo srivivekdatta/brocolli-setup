@@ -65,4 +65,4 @@ record PartyInfo(
 ) {}
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
-enum PaymentType { WIRE, ACH, FEDNOW }
+enum PaymentType { WIRE, ACH, FEDNOW, CHIPS, FPS }

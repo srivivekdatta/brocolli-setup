@@ -46,7 +46,7 @@ CREATE TABLE wire_payments (
     CONSTRAINT pk_wire_payments       PRIMARY KEY (payment_id),
     CONSTRAINT uq_wire_transaction_id UNIQUE      (transaction_id),
     CONSTRAINT chk_wire_status        CHECK       (status IN ('RECEIVED','APPROVED','HELD','REJECTED')),
-    CONSTRAINT chk_wire_payment_type  CHECK       (payment_type IN ('WIRE','ACH','FEDNOW')),
+    CONSTRAINT chk_wire_payment_type  CHECK       (payment_type IN ('WIRE','ACH','FEDNOW','CHIPS','FPS')),
     CONSTRAINT chk_wire_amount        CHECK       (amount > 0)
 );
 
