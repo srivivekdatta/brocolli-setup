@@ -2,18 +2,20 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "wire.payment.v1",
   "title": "WirePayment",
-  "description": "Wire payment event schema — ISO 20022 aligned (pacs.008). v1.2.0",
+  "description": "Wire payment event schema — ISO 20022 aligned (pacs.008). v1.3.0",
   "type": "object",
-  "required": ["transaction"],
+  "required": [
+    "transaction"
+  ],
   "additionalProperties": false,
   "properties": {
-
     "transaction": {
       "type": "object",
-      "required": ["wireData"],
+      "required": [
+        "wireData"
+      ],
       "additionalProperties": false,
       "properties": {
-
         "wireData": {
           "type": "object",
           "required": [
@@ -27,7 +29,6 @@
           ],
           "additionalProperties": false,
           "properties": {
-
             "transactionId": {
               "type": "string",
               "format": "uuid",
@@ -36,21 +37,27 @@
             "amount": {
               "type": "number",
               "exclusiveMinimum": 0,
-              "description": "Transaction amount — use BigDecimal on consumer side, never Double"
+              "description": "Instructed settlement amount — use BigDecimal on consumer side, never Double"
             },
             "currency": {
               "type": "string",
               "pattern": "^[A-Z]{3}$",
-              "description": "ISO 4217 currency code e.g. USD, EUR, GBP"
+              "description": "Instructed/settlement currency — ISO 4217 e.g. USD. May differ from debit/credit account currencies in FX wires"
             },
             "valueDate": {
               "type": "string",
               "format": "date-time",
-              "description": "ISO 8601 date-time — UTC preferred e.g. 2026-05-02T14:30:00Z"
+              "description": "ISO 8601 settlement date-time — UTC preferred e.g. 2026-05-02T14:30:00Z"
             },
             "paymentType": {
               "type": "string",
-              "enum": ["WIRE", "ACH", "FEDNOW", "CHIPS", "FPS"],
+              "enum": [
+                "WIRE",
+                "ACH",
+                "FEDNOW",
+                "CHIPS",
+                "FPS"
+              ],
               "description": "Payment rail. WIRE=Fedwire, ACH=NACHA, FEDNOW=FedNow instant, CHIPS=Clearing House, FPS=UK Faster Payments"
             },
             "memo": {
@@ -63,23 +70,23 @@
               "maxLength": 10,
               "description": "ISO 20022 Purpose2Choice code e.g. SALA, SUPP, TREA, INTC"
             },
-
             "debit": {
-              "$ref": "#/definitions/party"
+              "$ref": "#/definitions/wireParty"
             },
-
             "credit": {
-              "$ref": "#/definitions/party"
+              "$ref": "#/definitions/wireParty"
             }
           }
         }
       }
     },
-
     "party": {
       "type": "object",
       "description": "Originating party context — optional. Present for online/API-initiated payments. Absent for bulk/file-based submissions.",
-      "required": ["userId", "companyId"],
+      "required": [
+        "userId",
+        "companyId"
+      ],
       "additionalProperties": false,
       "properties": {
         "userId": {
@@ -92,16 +99,15 @@
         }
       }
     }
-
   },
-
   "definitions": {
-
-    "party": {
+    "wireParty": {
       "type": "object",
-      "required": ["account"],
+      "required": [
+        "account"
+      ],
       "additionalProperties": false,
-      "description": "Debit or credit party — account details + optional address",
+      "description": "Debit or credit party — account + bank identity + currency + country + optional address",
       "properties": {
         "account": {
           "$ref": "#/definitions/account"
@@ -111,49 +117,78 @@
         }
       }
     },
-
     "account": {
       "type": "object",
-      "required": ["accountNumber", "routingNumber", "accountHolderName"],
+      "required": [
+        "accountNumber",
+        "accountHolderName",
+        "currency",
+        "countryCode",
+        "bankId",
+        "bankIdType"
+      ],
       "additionalProperties": false,
       "properties": {
         "accountNumber": {
           "type": "string",
-          "pattern": "^[0-9]{4,17}$",
-          "description": "BBAN — 4 to 17 digits"
-        },
-        "routingNumber": {
-          "type": "string",
-          "pattern": "^[0-9]{9}$",
-          "description": "ABA routing transit number — 9 digits"
-        },
-        "bankName": {
-          "type": "string",
-          "maxLength": 140,
-          "description": "Financial institution name"
-        },
-        "bic": {
-          "type": "string",
-          "pattern": "^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$",
-          "description": "ISO 9362 BIC — 8 or 11 characters. Required for WIRE/CHIPS/FPS rails"
+          "pattern": "^[0-9A-Za-z]{4,34}$",
+          "description": "Account number — numeric for ABA/CHIPS, alphanumeric for IBAN-style or FPS"
         },
         "accountHolderName": {
           "type": "string",
           "maxLength": 140,
-          "description": "Legal name of account holder"
+          "description": "Legal name of account holder — ISO 20022 max 140 chars"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "Account currency — ISO 4217 e.g. USD, GBP, EUR. May differ from instructed currency in FX wires"
+        },
+        "countryCode": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$",
+          "description": "Account domicile country — ISO 3166-1 alpha-2 e.g. US, GB, DE. Used for sanctions screening jurisdiction"
+        },
+        "bankId": {
+          "type": "string",
+          "maxLength": 35,
+          "description": "Bank identifier value — format depends on bankIdType. ABA=9-digit routing, BIC=8 or 11 chars, CHIPS=4-digit UID, SORT=6-digit UK sort code"
+        },
+        "bankIdType": {
+          "type": "string",
+          "enum": [
+            "ABA",
+            "BIC",
+            "CHIPS",
+            "SORT"
+          ],
+          "description": "Bank identifier type. ABA=US routing number, BIC=ISO 9362 SWIFT code, CHIPS=Clearing House UID, SORT=UK sort code"
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Financial institution name — optional, informational"
         }
       }
     },
-
     "postalAddress": {
       "type": "object",
-      "required": ["country"],
+      "required": [
+        "country"
+      ],
       "additionalProperties": false,
       "description": "ISO 20022 PostalAddress24 — hybrid structured + free-text fallback lines",
       "properties": {
         "addressType": {
           "type": "string",
-          "enum": ["ADDR", "PBOX", "HOME", "BIZZ", "MLTO", "DLVY"],
+          "enum": [
+            "ADDR",
+            "PBOX",
+            "HOME",
+            "BIZZ",
+            "MLTO",
+            "DLVY"
+          ],
           "description": "ISO 20022 AddressType2Code. ADDR=postal, BIZZ=business, PBOX=PO box"
         },
         "streetName": {
@@ -227,6 +262,5 @@
         }
       }
     }
-
   }
 }
